@@ -24,8 +24,7 @@
         "googleMaps": {
           "apiKey": "AIzaSyChRj6WDDOAE3pCSVfb0GcxGmzaA6bLh0s"
         }
-      },
-      "package": "com.proteinche.Pathfinder"
+      }
     },
     "web": {
       "bundler": "metro",
@@ -37,11 +36,6 @@
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "eas": {
-        "projectId": "8f084ded-19d7-44fc-9905-16ef4056ae48"
-      }
     }
   }
 }
