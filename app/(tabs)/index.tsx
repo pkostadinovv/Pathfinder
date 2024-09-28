@@ -1,18 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Dimensions, ActivityIndicator, Button } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { StyleSheet, View, Dimensions, Button } from 'react-native';
+import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 
 export default function HomeScreen() {
   const [myLocation, setMyLocation] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [path, setPath] = useState([]);
-  const [locationSubscription, setLocationSubscription] = useState(null);
-  const [lastLocation, setLastLocation] = useState(null);
-  const [lastTimestamp, setLastTimestamp] = useState(null);
+  const [dots, setDots] = useState([]); // Store all dots
 
-  const MAX_DISTANCE = 20; // Max allowed distance in meters between points
-  const MAX_SPEED = 7; // Max speed in km/h considered valid for walking or jogging
+  const MAX_DISTANCE = 1; // Adjusted max distance in meters between points
 
   useEffect(() => {
     const getLocation = async () => {
@@ -23,7 +19,7 @@ export default function HomeScreen() {
       }
 
       let location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
+        accuracy: Location.Accuracy.Balanced,
       });
       const { latitude, longitude } = location.coords;
       setMyLocation({ latitude, longitude });
@@ -35,51 +31,51 @@ export default function HomeScreen() {
   const handleStartStop = async () => {
     if (isRecording) {
       // Stop tracking
-      if (locationSubscription) {
-        locationSubscription.remove();
-        setLocationSubscription(null);
-      }
       setIsRecording(false);
     } else {
-      // Start tracking with refined filtering logic
+      // Start tracking
       const subscription = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.High, // Increase accuracy
+          accuracy: Location.Accuracy.Balanced,
           timeInterval: 1000,
-          distanceInterval: 1, // Small distance interval to ensure frequent updates
+          distanceInterval: 1,
         },
         (location) => {
           const { latitude, longitude } = location.coords;
-          const currentTimestamp = location.timestamp;
 
-          if (lastLocation && lastTimestamp) {
-              distance = getDistanceFromLatLonInMeters(
-              lastLocation.latitude,
-              lastLocation.longitude,
-              latitude,
-              longitude
-            );
-            const timeElapsed = (currentTimestamp - lastTimestamp) / 1000; // Convert ms to seconds
-            const speed = (distance / timeElapsed) * 3.6; // Convert m/s to km/h
+          setDots((prevDots) => {
+            console.log("Previous dots: ", prevDots); // Debugging log
+            if (prevDots.length > 0) {
+              const lastDot = prevDots[prevDots.length - 1];
+              const distance = getDistanceFromLatLonInMeters(
+                lastDot.latitude,
+                lastDot.longitude,
+                latitude,
+                longitude
+              );
 
-            // Apply simplified filtering logic
-            if (speed <= MAX_SPEED && distance <= MAX_DISTANCE) {
-              setPath((prevPath) => [...prevPath, { latitude, longitude }]);
-              setMyLocation({ latitude, longitude });
+              console.log("Calculated distance: ", distance); // Log the calculated distance
+
+              if (distance >= MAX_DISTANCE) {
+                console.log("Adding new dot: ", { latitude, longitude }); // Debugging log
+                return [...prevDots, { latitude, longitude }];
+              } else {
+                console.log("Dot too close, not adding."); // Debugging log
+                return prevDots;
+              }
+            } else {
+              console.log("Adding first dot: ", { latitude, longitude }); // Debugging log
+              return [{ latitude, longitude }];
             }
-          } else {
-            // First point, no filtering
-            setPath((prevPath) => [...prevPath, { latitude, longitude }]);
-            setMyLocation({ latitude, longitude });
-          }
+          });
 
-          // Update lastLocation and lastTimestamp
-          setLastLocation({ latitude, longitude });
-          setLastTimestamp(currentTimestamp);
+          // Update the map to center on the new location
+          setMyLocation({ latitude, longitude });
         }
       );
-      setLocationSubscription(subscription);
+
       setIsRecording(true);
+      return () => subscription && subscription.remove();
     }
   };
 
@@ -101,11 +97,7 @@ export default function HomeScreen() {
   };
 
   if (!myLocation) {
-    return (
-      <View style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color="#0000ff" />
-      </View>
-    );
+    return null; // Return null or a loading indicator if the location isn't available yet
   }
 
   return (
@@ -118,29 +110,21 @@ export default function HomeScreen() {
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         }}
-        provider='google'
+        provider="google"
         showsUserLocation={true}
       >
-        {myLocation && (
-          <Marker
-            coordinate={myLocation}
-            title="You are here"
-            description="This is your current location"
+        {/* Render all dots */}
+        {dots.map((dot, index) => (
+          <Circle
+            key={index}
+            center={dot}
+            radius={0.3} // Small radius to represent the dot
+            fillColor="blue"
           />
-        )}
-        {path.length > 0 && (
-          <Polyline
-            coordinates={path}
-            strokeColor="#000" // Black line
-            strokeWidth={4}
-          />
-        )}
+        ))}
       </MapView>
       <View style={styles.buttonContainer}>
-        <Button
-          title={isRecording ? "Stop" : "Start"}
-          onPress={handleStartStop}
-        />
+        <Button title={isRecording ? "Stop" : "Start"} onPress={handleStartStop} />
       </View>
     </View>
   );
@@ -156,10 +140,6 @@ const styles = StyleSheet.create({
   map: {
     width: Dimensions.get('window').width,
     height: Dimensions.get('window').height,
-  },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   buttonContainer: {
     position: 'absolute',
