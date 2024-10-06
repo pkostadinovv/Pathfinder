@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Dimensions, Button } from 'react-native';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -6,9 +6,11 @@ import * as Location from 'expo-location';
 export default function HomeScreen() {
   const [myLocation, setMyLocation] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [dots, setDots] = useState([]); // Store all dots
+  const [dots, setDots] = useState([]); // Store all dots during recording
+  const [paths, setPaths] = useState([]); // Store completed paths
+  const locationSubscriptionRef = useRef(null); // Store the location subscription
 
-  const MAX_DISTANCE = 1; // Adjusted max distance in meters between points
+  const MAX_DISTANCE = 5; // Adjusted max distance in meters between points
 
   useEffect(() => {
     const getLocation = async () => {
@@ -19,7 +21,7 @@ export default function HomeScreen() {
       }
 
       let location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.BestForNavigation,
       });
       const { latitude, longitude } = location.coords;
       setMyLocation({ latitude, longitude });
@@ -31,12 +33,23 @@ export default function HomeScreen() {
   const handleStartStop = async () => {
     if (isRecording) {
       // Stop tracking
-      setIsRecording(false);
+      if (locationSubscriptionRef.current) {
+        locationSubscriptionRef.current.remove(); // Stop the location subscription
+        locationSubscriptionRef.current = null; // Clear the reference
+      }
+
+      // Save the current dots into paths and clear the dots
+      if (dots.length > 0) {
+        setPaths((prevPaths) => [...prevPaths, dots]); // Store the completed path
+        setDots([]); // Clear dots
+      }
+
+      setIsRecording(false); // Update the recording state to stopped
     } else {
       // Start tracking
       const subscription = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.BestForNavigation,
           timeInterval: 1000,
           distanceInterval: 1,
         },
@@ -44,7 +57,6 @@ export default function HomeScreen() {
           const { latitude, longitude } = location.coords;
 
           setDots((prevDots) => {
-            console.log("Previous dots: ", prevDots); // Debugging log
             if (prevDots.length > 0) {
               const lastDot = prevDots[prevDots.length - 1];
               const distance = getDistanceFromLatLonInMeters(
@@ -54,17 +66,12 @@ export default function HomeScreen() {
                 longitude
               );
 
-              console.log("Calculated distance: ", distance); // Log the calculated distance
-
               if (distance >= MAX_DISTANCE) {
-                console.log("Adding new dot: ", { latitude, longitude }); // Debugging log
                 return [...prevDots, { latitude, longitude }];
               } else {
-                console.log("Dot too close, not adding."); // Debugging log
                 return prevDots;
               }
             } else {
-              console.log("Adding first dot: ", { latitude, longitude }); // Debugging log
               return [{ latitude, longitude }];
             }
           });
@@ -74,8 +81,10 @@ export default function HomeScreen() {
         }
       );
 
+      // Save the subscription reference
+      locationSubscriptionRef.current = subscription;
+
       setIsRecording(true);
-      return () => subscription && subscription.remove();
     }
   };
 
@@ -113,7 +122,7 @@ export default function HomeScreen() {
         provider="google"
         showsUserLocation={true}
       >
-        {/* Render all dots */}
+        {/* Render all dots during the recording */}
         {dots.map((dot, index) => (
           <Circle
             key={index}
@@ -122,6 +131,18 @@ export default function HomeScreen() {
             fillColor="blue"
           />
         ))}
+
+        {/* Render completed paths */}
+        {paths.map((path, pathIndex) =>
+          path.map((dot, dotIndex) => (
+            <Circle
+              key={`${pathIndex}-${dotIndex}`}
+              center={dot}
+              radius={0.3} // Small radius to represent the dot
+              fillColor="red"
+            />
+          ))
+        )}
       </MapView>
       <View style={styles.buttonContainer}>
         <Button title={isRecording ? "Stop" : "Start"} onPress={handleStartStop} />
