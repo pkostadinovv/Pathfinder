@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Dimensions, Button } from 'react-native';
+import { StyleSheet, View, Dimensions, Button, Alert } from 'react-native';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 
 export default function HomeScreen() {
   const [myLocation, setMyLocation] = useState(null);
@@ -10,7 +11,7 @@ export default function HomeScreen() {
   const [paths, setPaths] = useState([]); // Store completed paths
   const locationSubscriptionRef = useRef(null); // Store the location subscription
 
-  const MAX_DISTANCE = 5; // Adjusted max distance in meters between points
+  const MAX_DISTANCE = 10; // Adjusted max distance in meters between points
 
   useEffect(() => {
     const getLocation = async () => {
@@ -25,10 +26,34 @@ export default function HomeScreen() {
       });
       const { latitude, longitude } = location.coords;
       setMyLocation({ latitude, longitude });
+
+      // Load cached paths from AsyncStorage
+      loadPathsFromStorage();
     };
 
     getLocation();
   }, []);
+
+  // Load cached paths from AsyncStorage
+  const loadPathsFromStorage = async () => {
+    try {
+      const storedPaths = await AsyncStorage.getItem('paths');
+      if (storedPaths !== null) {
+        setPaths(JSON.parse(storedPaths)); // Load saved paths from storage
+      }
+    } catch (error) {
+      console.error("Failed to load paths from storage", error);
+    }
+  };
+
+  // Save paths to AsyncStorage
+  const savePathsToStorage = async (updatedPaths) => {
+    try {
+      await AsyncStorage.setItem('paths', JSON.stringify(updatedPaths));
+    } catch (error) {
+      console.error("Failed to save paths to storage", error);
+    }
+  };
 
   const handleStartStop = async () => {
     if (isRecording) {
@@ -40,7 +65,9 @@ export default function HomeScreen() {
 
       // Save the current dots into paths and clear the dots
       if (dots.length > 0) {
-        setPaths((prevPaths) => [...prevPaths, dots]); // Store the completed path
+        const updatedPaths = [...paths, dots];
+        setPaths(updatedPaths); // Store the completed path
+        savePathsToStorage(updatedPaths); // Save updated paths to AsyncStorage
         setDots([]); // Clear dots
       }
 
