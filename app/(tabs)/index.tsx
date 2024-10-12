@@ -1,31 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Dimensions, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
-import MapView, { Circle, Polyline, UrlTile, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Polyline, Marker, UrlTile } from 'react-native-maps';
 import NetInfo from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import PathStorage from '../storage/paths'; // Import your PathStorage class
 
 export default function HomeScreen() {
   const [myLocation, setMyLocation] = useState(null);
-  const [isOnline, setIsOnline] = useState(true); // Track online/offline status
-  const [dots, setDots] = useState([]); // Store dots for current path
-  const [paths, setPaths] = useState([]); // Store all cached paths
-  const [isRecording, setIsRecording] = useState(false); // Recording state
-  const [loading, setLoading] = useState(true); // Loading state for location fetching
-  const [locationSubscription, setLocationSubscription] = useState(null); // Store the location subscription
+  const [isOnline, setIsOnline] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [locationSubscription, setLocationSubscription] = useState(null);
+  const [dots, setDots] = useState([]);
+  const [pathStorage] = useState(new PathStorage()); // Initialize PathStorage
 
   const MIN_DISTANCE = 5; // Minimum distance between dots (in meters)
 
   useEffect(() => {
-    // Subscribe to network state changes
     const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOnline(state.isConnected); // Update online status
+      setIsOnline(state.isConnected);
     });
 
-    // Fetch cached paths from local storage
     loadCachedPaths();
 
-    // Get initial location and request permissions
     const getLocation = async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
@@ -37,89 +35,43 @@ export default function HomeScreen() {
       });
       const { latitude, longitude } = location.coords;
       setMyLocation({ latitude, longitude });
-      setLoading(false); // Location fetched, stop showing loader
+      setLoading(false);
     };
 
     getLocation();
 
     return () => {
       unsubscribe();
-      // Cleanup any ongoing location subscriptions when component unmounts
       if (locationSubscription) {
         locationSubscription.remove();
       }
     };
   }, [locationSubscription]);
 
-  // Load cached paths from AsyncStorage
   const loadCachedPaths = async () => {
-    try {
-      const storedPaths = await AsyncStorage.getItem('paths');
-      if (storedPaths) {
-        setPaths(JSON.parse(storedPaths)); // Set cached paths
-      }
-    } catch (error) {
-      console.error("Failed to load paths from storage", error);
-    }
+    await pathStorage.loadPaths(); // Load paths into PathStorage
   };
 
-  // Save paths to AsyncStorage
-  const savePathsToStorage = async (updatedPaths) => {
-    try {
-      await AsyncStorage.setItem('paths', JSON.stringify(updatedPaths));
-    } catch (error) {
-      console.error("Failed to save paths to storage", error);
-    }
-  };
-
-  // Clear all paths from state and storage
-  const clearAllPaths = async () => {
-    setPaths([]); // Clear paths from state
-    await AsyncStorage.removeItem('paths'); // Clear paths from AsyncStorage
-  };
-
-  // Function to calculate the distance between two points (Haversine formula)
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371000; // Radius of the Earth in meters
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distance = R * c;
-    return distance;
-  };
-
-  // Start/Stop recording a new path
   const handleStartStop = async () => {
     if (isRecording) {
-      // Stop recording
       setIsRecording(false);
-      const updatedPaths = [...paths, dots];
-      setPaths(updatedPaths);
-      savePathsToStorage(updatedPaths);
-      setDots([]); // Clear dots after saving
+      pathStorage.addPath(dots); // Add current dots to storage
+      await pathStorage.savePaths(); // Save paths to AsyncStorage
+      setDots([]); // Reset current path
 
-      // Remove location subscription to stop tracking
       if (locationSubscription) {
         locationSubscription.remove();
-        setLocationSubscription(null); // Clear the subscription
+        setLocationSubscription(null);
       }
     } else {
-      // Start recording
       setIsRecording(true);
 
-      // Start tracking location while recording
       const subscription = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 1 },
         (location) => {
           const { latitude, longitude } = location.coords;
 
           setDots((prevDots) => {
-            // If there are already dots, check the distance to the last one
             if (prevDots.length > 0) {
               const lastDot = prevDots[prevDots.length - 1];
               const distance = calculateDistance(
@@ -132,21 +84,53 @@ export default function HomeScreen() {
               if (distance >= MIN_DISTANCE) {
                 return [...prevDots, { latitude, longitude }];
               } else {
-                // Do not add if the distance is too short
                 return prevDots;
               }
             } else {
-              // First dot, no need to check the distance
               return [{ latitude, longitude }];
             }
           });
         }
       );
-      setLocationSubscription(subscription); // Save the subscription for later cleanup
+      setLocationSubscription(subscription);
     }
   };
 
-  // Show loading spinner while waiting for location
+  const handleMarkerDrag = (index, coordinate) => {
+    const updatedDots = [...dots];
+    updatedDots[index] = coordinate;
+    setDots(updatedDots);
+  };
+
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // Distance in meters
+  };
+
+  // Clear paths from storage and reset state
+  const handleClearPaths = async () => {
+    await pathStorage.clearPaths();
+    setDots([]); // Clear current dots
+    loadCachedPaths(); // Reload cached paths to reflect changes
+  };
+
+  // Log paths for testing purposes
+  const logPaths = async () => {
+    const paths = pathStorage.getPaths();
+    console.log('Stored Paths:', paths);
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -159,16 +143,15 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <MapView
         style={styles.map}
-        provider={isOnline ? PROVIDER_GOOGLE : null}
+        provider={isOnline ? 'google' : null}
         initialRegion={{
-          latitude: myLocation.latitude,
-          longitude: myLocation.longitude,
+          latitude: myLocation?.latitude || 37.78825,
+          longitude: myLocation?.longitude || -122.4324,
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         }}
         showsUserLocation={true}
       >
-        {/* If offline, show OSM tiles */}
         {!isOnline && (
           <UrlTile
             urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -176,27 +159,26 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Render existing cached paths */}
-        {paths.map((path, pathIndex) => (
+        {pathStorage.getPaths().map((path, pathIndex) => (
           <Polyline
             key={pathIndex}
-            coordinates={path}
+            coordinates={path.dots || []}
             strokeColor="blue"
             strokeWidth={10}
           />
         ))}
 
-        {/* Render current path being recorded */}
         {dots.length > 0 && (
           <>
             <Polyline coordinates={dots} strokeColor="red" strokeWidth={10} />
-            {/* Render each dot on the path */}
-            {dots.map((dot, index) => (
-              <Circle
+            {dots?.map((dot, index) => (
+              <Marker
                 key={index}
-                center={dot}
-                radius={0.5}
-                fillColor="red"
+                coordinate={dot}
+                draggable
+                onDragEnd={(e) =>
+                  handleMarkerDrag(index, e.nativeEvent.coordinate)
+                }
               />
             ))}
           </>
@@ -208,8 +190,12 @@ export default function HomeScreen() {
           <Text style={styles.buttonText}>{isRecording ? "Stop" : "Start"}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={clearAllPaths} style={[styles.button, styles.clearButton]}>
+        <TouchableOpacity onPress={handleClearPaths} style={[styles.button, styles.clearButton]}>
           <Text style={styles.buttonText}>Clear</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={logPaths} style={[styles.button, styles.testButton]}>
+          <Text style={styles.buttonText}>Test PathStorage</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -241,13 +227,11 @@ const styles = StyleSheet.create({
   clearButton: {
     backgroundColor: 'red',
   },
+  testButton: {
+    backgroundColor: 'orange',
+  },
   buttonText: {
     color: '#fff',
     fontSize: 16,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });
