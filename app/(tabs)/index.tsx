@@ -55,7 +55,7 @@ export default function HomeScreen() {
   const handleStartStop = async () => {
     if (isRecording) {
       setIsRecording(false);
-      pathStorage.addPath(dots); // Add current dots to storage
+      await pathStorage.addPath(dots); // Add current dots to storage
       await pathStorage.savePaths(); // Save paths to AsyncStorage
       setDots([]); // Reset current path
 
@@ -65,6 +65,7 @@ export default function HomeScreen() {
       }
     } else {
       setIsRecording(true);
+      setDots([]); // Reset dots when starting a new recording
 
       const subscription = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 1 },
@@ -164,13 +165,13 @@ export default function HomeScreen() {
             key={pathIndex}
             coordinates={path.dots || []}
             strokeColor="blue"
-            strokeWidth={10}
+            strokeWidth={5}
           />
         ))}
 
         {dots.length > 0 && (
           <>
-            <Polyline coordinates={dots} strokeColor="red" strokeWidth={10} />
+            <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
             {dots?.map((dot, index) => (
               <Marker
                 key={index}
