@@ -81,6 +81,12 @@ class PathStorage {
       console.error('Error clearing paths:', error);
     }
   }
+
+  // New logPaths function to log paths to console
+  logPaths() {
+    console.log('Current Stored Paths:', this.paths);
+  }
 }
 
 export default PathStorage;
+

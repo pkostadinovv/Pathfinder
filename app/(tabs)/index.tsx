@@ -3,8 +3,9 @@ import { StyleSheet, View, Dimensions, ActivityIndicator, TouchableOpacity, Text
 import MapView, { Polyline, Marker, UrlTile } from 'react-native-maps';
 import NetInfo from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import PathStorage from '../storage/paths'; // Import your PathStorage class
+import Icon from 'react-native-vector-icons/FontAwesome'; // Import FontAwesome for the map-signs icon
+import * as FileSystem from 'expo-file-system'; // Import expo-file-system
 
 export default function HomeScreen() {
   const [myLocation, setMyLocation] = useState(null);
@@ -13,9 +14,12 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [locationSubscription, setLocationSubscription] = useState(null);
   const [dots, setDots] = useState([]);
+  const [selectedPath, setSelectedPath] = useState(null); // To store selected path info
   const [pathStorage] = useState(new PathStorage()); // Initialize PathStorage
+  const mapRef = React.useRef(null); // Ref to interact with MapView
 
   const MIN_DISTANCE = 5; // Minimum distance between dots (in meters)
+  const TILE_FOLDER = `${FileSystem.documentDirectory}tiles`; // Folder to store tiles
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -23,21 +27,6 @@ export default function HomeScreen() {
     });
 
     loadCachedPaths();
-
-    const getLocation = async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn("Permission to access location was denied");
-        return;
-      }
-      let location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.BestForNavigation,
-      });
-      const { latitude, longitude } = location.coords;
-      setMyLocation({ latitude, longitude });
-      setLoading(false);
-    };
-
     getLocation();
 
     return () => {
@@ -47,6 +36,20 @@ export default function HomeScreen() {
       }
     };
   }, [locationSubscription]);
+
+  const getLocation = async () => {
+    let { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      console.warn("Permission to access location was denied");
+      return;
+    }
+    let location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.BestForNavigation,
+    });
+    const { latitude, longitude } = location.coords;
+    setMyLocation({ latitude, longitude });
+    setLoading(false);
+  };
 
   const loadCachedPaths = async () => {
     await pathStorage.loadPaths(); // Load paths into PathStorage
@@ -119,17 +122,76 @@ export default function HomeScreen() {
     return R * c; // Distance in meters
   };
 
+  // Download tile based on x, y, z and save it locally
+  const downloadTile = async (x, y, z) => {
+    const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+    const filePath = `${TILE_FOLDER}/${z}_${x}_${y}.png`;
+
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(filePath);
+      if (!fileInfo.exists) {
+        await FileSystem.makeDirectoryAsync(TILE_FOLDER, { intermediates: true });
+        const download = await FileSystem.downloadAsync(url, filePath);
+        if (download.status === 200) {
+          console.log(`Tile ${z}/${x}/${y} downloaded successfully.`);
+        } else {
+          console.warn(`Failed to download tile ${z}/${x}/${y}: Status code ${download.status}`);
+        }
+      }
+    } catch (error) {
+      console.error(`Error downloading tile ${z}/${x}/${y}:`, error);
+    }
+  };
+
+  // Function to download tiles within the visible region
+  const downloadVisibleTiles = async (region) => {
+    try {
+      const { latitude, longitude, latitudeDelta, longitudeDelta } = region;
+      const zoomLevel = 15; // Assuming zoom level is fixed to 15 for simplicity (this can be dynamic)
+
+      // Calculate tile range
+      const xMin = Math.floor(((longitude - longitudeDelta) + 180) / 360 * (2 ** zoomLevel));
+      const xMax = Math.floor(((longitude + longitudeDelta) + 180) / 360 * (2 ** zoomLevel));
+      const yMin = Math.floor(((1 - Math.log(Math.tan((latitude - latitudeDelta) * Math.PI / 180) + 1 / Math.cos((latitude - latitudeDelta) * Math.PI / 180)) / Math.PI) / 2) * (2 ** zoomLevel));
+      const yMax = Math.floor(((1 - Math.log(Math.tan((latitude + latitudeDelta) * Math.PI / 180) + 1 / Math.cos((latitude + latitudeDelta) * Math.PI / 180)) / Math.PI) / 2) * (2 ** zoomLevel));
+
+      // Download all tiles in range
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          await downloadTile(x, y, zoomLevel);
+        }
+      }
+    } catch (error) {
+      console.error("Error calculating tile range or downloading tiles:", error);
+    }
+  };
+
   // Clear paths from storage and reset state
   const handleClearPaths = async () => {
     await pathStorage.clearPaths();
     setDots([]); // Clear current dots
+    setSelectedPath(null); // Clear the selected path icon
     loadCachedPaths(); // Reload cached paths to reflect changes
   };
 
-  // Log paths for testing purposes
-  const logPaths = async () => {
-    const paths = pathStorage.getPaths();
-    console.log('Stored Paths:', paths);
+  // Handle tapping on a saved path to pan to its start point and show a marker
+  const handlePathPress = (path) => {
+    if (path.dots.length > 0) {
+      const firstDot = path.dots[0];
+      setSelectedPath(firstDot); // Store the first dot of the selected path
+      mapRef.current.animateCamera({
+        center: {
+          latitude: firstDot.latitude,
+          longitude: firstDot.longitude,
+        },
+        zoom: 15,
+      }, { duration: 1000 });
+    }
+  };
+
+  // Handle tapping on the map to deselect a path
+  const handleMapPress = () => {
+    setSelectedPath(null); // Clear the selected path
   };
 
   if (loading) {
@@ -143,6 +205,7 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <MapView
+        ref={mapRef} // Reference to MapView for controlling camera
         style={styles.map}
         provider={isOnline ? 'google' : null}
         initialRegion={{
@@ -152,11 +215,19 @@ export default function HomeScreen() {
           longitudeDelta: 0.01,
         }}
         showsUserLocation={true}
+        onPress={handleMapPress} // Handle press on map to deselect paths
+        onRegionChangeComplete={(region) => {
+          if (isOnline) {
+            downloadVisibleTiles(region); // Download tiles when online
+          }
+        }}
       >
+        {/* Add UrlTile for offline support */}
         {!isOnline && (
           <UrlTile
-            urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            urlTemplate={`file://${TILE_FOLDER}/{z}_{x}_{y}.png`}
             maximumZ={19}
+            shouldReplaceMapContent={true} // Use this to replace Google tiles when offline
           />
         )}
 
@@ -166,6 +237,8 @@ export default function HomeScreen() {
             coordinates={path.dots || []}
             strokeColor="blue"
             strokeWidth={5}
+            tappable={true} // Make the polyline tappable
+            onPress={() => handlePathPress(path)} // Handle the press on the polyline
           />
         ))}
 
@@ -184,6 +257,15 @@ export default function HomeScreen() {
             ))}
           </>
         )}
+
+        {/* Marker for the start of the selected path */}
+        {selectedPath && (
+          <Marker
+            coordinate={selectedPath}
+          >
+            <Icon name="map-signs" size={30} color="blue" />
+          </Marker>
+        )}
       </MapView>
 
       <View style={styles.buttonContainer}>
@@ -195,14 +277,13 @@ export default function HomeScreen() {
           <Text style={styles.buttonText}>Clear</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={logPaths} style={[styles.button, styles.testButton]}>
+        <TouchableOpacity onPress={() => pathStorage.logPaths()} style={[styles.button, styles.testButton]}>
           <Text style={styles.buttonText}>Test PathStorage</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
