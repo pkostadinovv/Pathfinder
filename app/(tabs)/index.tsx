@@ -22,6 +22,7 @@ export default function HomeScreen() {
   const [selectedPath, setSelectedPath] = useState(null);
   const [pathStorage] = useState(new PathStorage());
   const mapRef = React.useRef(null);
+  const [tilesDownloaded, setTilesDownloaded] = useState(false); // Persistent state to track downloads
 
   const MIN_DISTANCE = 5; // Minimum distance between dots (in meters)
 
@@ -56,8 +57,11 @@ export default function HomeScreen() {
     setLoading(false);
 
     // Download and cache tiles if online
-    if (isOnline) {
-      await CacheAux.downloadTilesInArea(latitude, longitude);
+    if (isOnline && !tilesDownloaded) {
+      console.log("Downloading tiles...");
+      await CacheAux.downloadPredefinedTiles();
+      setTilesDownloaded(true);
+      console.log("Tiles downloaded successfully.");
     }
   };
 
@@ -67,32 +71,42 @@ export default function HomeScreen() {
     pathStorage.logPaths();
   };
 
-  const renderOfflineTiles = () => {
-    const tiles = [];
-    const initialZoom = 15;
-    if (myLocation) {
-      const { latitude, longitude } = myLocation;
-      const { xtile: x, ytile: y } = CacheAux.latLonToTile(latitude, longitude, initialZoom);
+const renderOfflineTiles = () => {
+  const tiles = [];
+  const initialZoom = 15; // Set the zoom level for rendering
+  const tileRange = 5; // Range of tiles to render (adjustable)
 
-      for (let dx = -2; dx <= 2; dx++) {
-        for (let dy = -2; dy <= 2; dy++) {
-          const cacheKey = `${initialZoom}_${x + dx}_${y + dy}`;
-          tiles.push(
-            <CachedImage
-              key={cacheKey}
-              source={{ uri: `https://tile.openstreetmap.org/${initialZoom}/${x + dx}/${y + dy}.png` }}
-              cacheKey={cacheKey}
-              style={styles.tile}
-              placeholderContent={<ActivityIndicator color="#0000ff" size="small" />}
-              resizeMode="contain"
-              onError={(e) => console.error("Error loading image from cache:", e.nativeEvent.error)}
-            />
-          );
-        }
+  if (myLocation) {
+    const { latitude, longitude } = myLocation;
+    const { xtile: x, ytile: y } = CacheAux.latLonToTile(latitude, longitude, initialZoom);
+
+    for (let dx = -Math.floor(tileRange / 2); dx <= Math.floor(tileRange / 2); dx++) {
+      for (let dy = -Math.floor(tileRange / 2); dy <= Math.floor(tileRange / 2); dy++) {
+        const tileX = x + dx;
+        const tileY = y + dy;
+        const cacheKey = `${initialZoom}_${tileX}_${tileY}`;
+        const tileUrl = `https://reritiles.protomix.com/${initialZoom}/${tileX}/${tileY}.png`; // Corrected URL
+
+        tiles.push(
+          <CachedImage
+            key={cacheKey}
+            source={{ uri: tileUrl }}
+            cacheKey={cacheKey}
+            style={styles.tile}
+            placeholderContent={<ActivityIndicator color="#0000ff" size="small" />}
+            resizeMode="contain"
+            onError={(e) =>
+              console.error(`Error loading tile from cache: ${cacheKey}`, e.nativeEvent.error)
+            }
+          />
+        );
       }
     }
-    return tiles;
-  };
+  }
+
+  return tiles;
+};
+
 
   const handleStartStop = async () => {
     if (isRecording) {

@@ -1,15 +1,19 @@
 import { CacheManager } from 'expo-cached-image';
 import * as FileSystem from 'expo-file-system';
 
-// Helper function for retry logic
+// Helper function for retry logic with logging
 const retry = (fn: () => Promise<any>, retries = 3, delay = 1000): Promise<any> =>
   fn().catch((err) =>
     retries > 1
-      ? new Promise((resolve) =>
-          setTimeout(() => resolve(retry(fn, retries - 1, delay * 2)), delay)
-        )
+      ? new Promise((resolve) => {
+          console.log(`Retrying... Attempts left: ${retries - 1}`);
+          setTimeout(() => resolve(retry(fn, retries - 1, delay * 2)), delay);
+        })
       : Promise.reject(err)
   );
+
+// Set to keep track of downloaded tiles to avoid duplicates
+const downloadedTiles = new Set<string>();
 
 // Convert latitude and longitude to tile coordinates at a specific zoom level
 export const latLonToTile = (lat: number, lon: number, zoom: number) => {
@@ -30,34 +34,78 @@ export const tileToLatLon = (xtile: number, ytile: number, zoom: number) => {
   return { lat, lon };
 };
 
-// Download a tile and cache it
-export const downloadTile = async (x: number, y: number, z: number) => {
-  const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+export const downloadTile = async (x, y, z) => {
+  console.log(`downloadTile called for (${x}, ${y}, ${z})`);
+
+  const baseUrl = `https://reritiles.protomix.com`;
+  const url = `${baseUrl}/${z}/${x}/${y}.png`;
   const cacheKey = `${z}_${x}_${y}`;
+  const downloadPath = `${FileSystem.cacheDirectory}${cacheKey}.png`; // Local file path
+
+  console.log(`Checking tile ${cacheKey} at URL: ${url}`);
 
   try {
-    const cachedUri = await CacheManager.getCachedUri({ key: cacheKey });
-    if (!cachedUri) {
-      await retry(() => CacheManager.downloadAsync({ uri: url, key: cacheKey }), 3);
-      console.log(`Tile ${z}/${x}/${y} downloaded and cached.`);
-    } else {
-      console.log(`Tile ${z}/${x}/${y} retrieved from cache.`);
+    // Check if the file exists in the local cache
+    const fileInfo = await FileSystem.getInfoAsync(downloadPath);
+    if (fileInfo.exists) {
+      console.log(`Tile ${cacheKey} retrieved from cache: ${downloadPath}`);
+      return; // Skip download if the file is already cached
     }
+
+    console.warn(`Tile ${cacheKey} not cached or file missing. Attempting to download...`);
+    // Download the tile to the local cache
+    await retry(() => FileSystem.downloadAsync(url, downloadPath), 3);
+    console.log(`Tile ${cacheKey} successfully downloaded to: ${downloadPath}`);
   } catch (error) {
-    console.error(`Error downloading tile ${z}/${x}/${y}:`, error);
+    console.error(`Error downloading tile ${cacheKey} from URL: ${url}`, error);
   }
+
+  console.log(`Finished processing tile ${cacheKey}`);
 };
 
-// Download all tiles within a specified area
-export const downloadTilesInArea = async (initialLat: number, initialLon: number, minZoom = 12, maxZoom = 17) => {
-  for (let zoom = minZoom; zoom <= maxZoom; zoom++) {
-    const { xtile: minX, ytile: minY } = latLonToTile(initialLat - 0.005, initialLon - 0.005, zoom);
-    const { xtile: maxX, ytile: maxY } = latLonToTile(initialLat + 0.005, initialLon + 0.005, zoom);
+export const downloadPredefinedTiles = async () => {
+  console.log(`Starting to download predefined tiles...`);
+
+  // Predefined tile ranges
+  const tileRanges = {
+    12: { x: [2109, 2110], y: [1362, 1363] },
+    13: { x: [4219, 4221], y: [2725, 2727] },
+    14: { x: [8439, 8443], y: [5451, 5455] },
+    15: { x: [16878, 16887], y: [10902, 10910] },
+    16: { x: [33756, 33775], y: [21804, 21820] },
+    17: { x: [67512, 67550], y: [43608, 43640] },
+  };
+
+  // Iterate over the predefined ranges
+  for (const zoom in tileRanges) {
+    const { x: [minX, maxX], y: [minY, maxY] } = tileRanges[zoom];
+    console.log(`Zoom ${zoom}: Downloading tiles from X(${minX}-${maxX}), Y(${minY}-${maxY})`);
 
     for (let x = minX; x <= maxX; x++) {
       for (let y = minY; y <= maxY; y++) {
-        await downloadTile(x, y, zoom);
+        console.log(`Processing tile at zoom ${zoom}, X: ${x}, Y: ${y}`);
+        await downloadTile(x, y, parseInt(zoom, 10));
       }
     }
+  }
+
+  console.log(`Finished downloading predefined tiles.`);
+};
+
+// Clear the cache directory for debugging
+export const clearCache = async () => {
+  console.log("Clearing cache...");
+  await FileSystem.deleteAsync(FileSystem.cacheDirectory, { idempotent: true });
+  console.log("Cache cleared.");
+};
+
+// List all cached files for verification
+export const listCachedFiles = async () => {
+  try {
+    const files = await FileSystem.readDirectoryAsync(FileSystem.cacheDirectory);
+    console.log("Cached files:", files);
+    return files;
+  } catch (error) {
+    console.error("Error reading cache directory:", error);
   }
 };
