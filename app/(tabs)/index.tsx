@@ -82,7 +82,7 @@ const renderOfflineTiles = () => {
     17: { x: [67512, 67550], y: [43608, 43640] },
   };
 
-  const initialZoom = 15; // Example: Adjust as needed
+  const initialZoom = 15; // Adjust zoom level as needed
   const tileRange = tileRanges[initialZoom];
 
   if (myLocation && tileRange) {
@@ -101,9 +101,9 @@ const renderOfflineTiles = () => {
             key={cacheKey}
             source={{ uri: localTilePath }}
             style={styles.tile}
-            onError={(e) =>
-              console.error(`Error loading tile from local cache: ${cacheKey}`, e.nativeEvent.error)
-            }
+            onError={() => {
+              console.warn(`Tile missing from cache: ${cacheKey}`);
+            }}
           />
         );
       }
@@ -112,8 +112,6 @@ const renderOfflineTiles = () => {
 
   return tiles;
 };
-
-
 
   const handleStartStop = async () => {
     if (isRecording) {
@@ -206,58 +204,107 @@ const renderOfflineTiles = () => {
 
   return (
     <View style={styles.container}>
-      <MapView
-        key={isOnline ? 'online-map' : 'offline-map'} // Forces re-render when switching modes
-        ref={mapRef}
-        style={styles.map}
-        provider={isOnline ? 'google' : null} // Use Google Maps only when online
-        initialRegion={{
-          latitude: myLocation?.latitude || 37.78825,
-          longitude: myLocation?.longitude || -122.4324,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }}
-        showsUserLocation={true}
-        onPress={handleMapPress}
-      >
-        {/* Render offline tiles when offline */}
-        {!isOnline && renderOfflineTiles()}
+      {isOnline ? (
+        <MapView
+          key="online-map"
+          ref={mapRef}
+          style={styles.map}
+          provider="google" // Use Google Maps provider only when online
+          initialRegion={{
+            latitude: myLocation?.latitude || 37.78825,
+            longitude: myLocation?.longitude || -122.4324,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }}
+          showsUserLocation={true}
+          onPress={handleMapPress}
+        >
+          {/* Render polylines for stored paths */}
+          {pathStorage.getPaths().map((path, pathIndex) => (
+            <Polyline
+              key={pathIndex}
+              coordinates={path.dots || []}
+              strokeColor="blue"
+              strokeWidth={5}
+              tappable={true}
+              onPress={() => handlePathPress(path)}
+            />
+          ))}
 
-        {/* Render polylines for stored paths */}
-        {pathStorage.getPaths().map((path, pathIndex) => (
-          <Polyline
-            key={pathIndex}
-            coordinates={path.dots || []}
-            strokeColor="blue"
-            strokeWidth={5}
-            tappable={true}
-            onPress={() => handlePathPress(path)}
-          />
-        ))}
+          {/* Render active dots while recording */}
+          {dots.length > 0 && (
+            <>
+              <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
+              {dots.map((dot, index) => (
+                <Marker
+                  key={index}
+                  coordinate={dot}
+                  draggable
+                  onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
+                  />
+              ))}
+            </>
+          )}
 
-        {/* Render active dots while recording */}
-        {dots.length > 0 && (
-          <>
-            <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
-            {dots.map((dot, index) => (
-              <Marker
-                key={index}
-                coordinate={dot}
-                draggable
-                onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
-              />
-            ))}
-          </>
-        )}
+          {/* Render marker for selected path */}
+          {selectedPath && (
+            <Marker coordinate={selectedPath}>
+              <Icon name="map-signs" size={30} color="blue" />
+            </Marker>
+          )}
+        </MapView>
+      ) : (
+        <MapView
+          key="offline-map"
+          ref={mapRef}
+          style={styles.map}
+          provider={null} // Disable Google Maps when offline
+          initialRegion={{
+            latitude: myLocation?.latitude || 37.78825,
+            longitude: myLocation?.longitude || -122.4324,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }}
+          onPress={handleMapPress}
+        >
+          {/* Render offline tiles */}
+          {renderOfflineTiles()}
 
-        {/* Render marker for selected path */}
-        {selectedPath && (
-          <Marker coordinate={selectedPath}>
-            <Icon name="map-signs" size={30} color="blue" />
-          </Marker>
-        )}
-      </MapView>
+          {/* Render polylines for stored paths */}
+          {pathStorage.getPaths().map((path, pathIndex) => (
+            <Polyline
+              key={pathIndex}
+              coordinates={path.dots || []}
+              strokeColor="blue"
+              strokeWidth={5}
+              tappable={true}
+              onPress={() => handlePathPress(path)}
+            />
+          ))}
 
+          {/* Render active dots while recording */}
+          {dots.length > 0 && (
+            <>
+              <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
+              {dots.map((dot, index) => (
+                <Marker
+                  key={index}
+                  coordinate={dot}
+                  draggable
+                  onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Render marker for selected path */}
+          {selectedPath && (
+            <Marker coordinate={selectedPath}>
+              <Icon name="map-signs" size={30} color="blue" />
+            </Marker>
+          )}
+        </MapView>
+      )}
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity onPress={handleStartStop} style={styles.button}>
