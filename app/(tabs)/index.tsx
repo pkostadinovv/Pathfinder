@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Dimensions, ActivityIndicator, TouchableOpacity, Text, Image } from 'react-native';
+import { StyleSheet, View, Dimensions, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
 import CachedImage from 'expo-cached-image';
 import NetInfo from '@react-native-community/netinfo';
@@ -28,7 +28,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOnline(state.isConnected); // Toggle offline/online state
+      setIsOnline(state.isConnected);
     });
 
     loadCachedPaths();
@@ -73,37 +73,31 @@ export default function HomeScreen() {
 
 const renderOfflineTiles = () => {
   const tiles = [];
-  const tileRanges = {
-    12: { x: [2109, 2110], y: [1362, 1363] },
-    13: { x: [4219, 4221], y: [2725, 2727] },
-    14: { x: [8439, 8443], y: [5451, 5455] },
-    15: { x: [16878, 16887], y: [10902, 10910] },
-    16: { x: [33756, 33775], y: [21804, 21820] },
-    17: { x: [67512, 67550], y: [43608, 43640] },
-  };
+  const initialZoom = 15; // Set the zoom level for rendering
+  const tileRange = 5; // Range of tiles to render (adjustable)
 
-  const initialZoom = 15; // Adjust zoom level as needed
-  const tileRange = tileRanges[initialZoom];
-
-  if (myLocation && tileRange) {
+  if (myLocation) {
     const { latitude, longitude } = myLocation;
-    const { xtile: centerX, ytile: centerY } = CacheAux.latLonToTile(latitude, longitude, initialZoom);
+    const { xtile: x, ytile: y } = CacheAux.latLonToTile(latitude, longitude, initialZoom);
 
-    const { x: [minX, maxX], y: [minY, maxY] } = tileRange;
-
-    for (let x = minX; x <= maxX; x++) {
-      for (let y = minY; y <= maxY; y++) {
-        const cacheKey = `${initialZoom}_${x}_${y}`;
-        const localTilePath = `${FileSystem.cacheDirectory}${cacheKey}.png`; // Path to cached file
+    for (let dx = -Math.floor(tileRange / 2); dx <= Math.floor(tileRange / 2); dx++) {
+      for (let dy = -Math.floor(tileRange / 2); dy <= Math.floor(tileRange / 2); dy++) {
+        const tileX = x + dx;
+        const tileY = y + dy;
+        const cacheKey = `${initialZoom}_${tileX}_${tileY}`;
+        const tileUrl = `https://reritiles.protomix.com/${initialZoom}/${tileX}/${tileY}.png`; // Corrected URL
 
         tiles.push(
-          <Image
+          <CachedImage
             key={cacheKey}
-            source={{ uri: localTilePath }}
+            source={{ uri: tileUrl }}
+            cacheKey={cacheKey}
             style={styles.tile}
-            onError={() => {
-              console.warn(`Tile missing from cache: ${cacheKey}`);
-            }}
+            placeholderContent={<ActivityIndicator color="#0000ff" size="small" />}
+            resizeMode="contain"
+            onError={(e) =>
+              console.error(`Error loading tile from cache: ${cacheKey}`, e.nativeEvent.error)
+            }
           />
         );
       }
@@ -112,6 +106,7 @@ const renderOfflineTiles = () => {
 
   return tiles;
 };
+
 
   const handleStartStop = async () => {
     if (isRecording) {
@@ -204,107 +199,52 @@ const renderOfflineTiles = () => {
 
   return (
     <View style={styles.container}>
-      {isOnline ? (
-        <MapView
-          key="online-map"
-          ref={mapRef}
-          style={styles.map}
-          provider="google" // Use Google Maps provider only when online
-          initialRegion={{
-            latitude: myLocation?.latitude || 37.78825,
-            longitude: myLocation?.longitude || -122.4324,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          }}
-          showsUserLocation={true}
-          onPress={handleMapPress}
-        >
-          {/* Render polylines for stored paths */}
-          {pathStorage.getPaths().map((path, pathIndex) => (
-            <Polyline
-              key={pathIndex}
-              coordinates={path.dots || []}
-              strokeColor="blue"
-              strokeWidth={5}
-              tappable={true}
-              onPress={() => handlePathPress(path)}
-            />
-          ))}
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        provider={isOnline ? 'google' : null}
+        initialRegion={{
+          latitude: myLocation?.latitude || 37.78825,
+          longitude: myLocation?.longitude || -122.4324,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        }}
+        showsUserLocation={true}
+        onPress={handleMapPress}
+      >
+        {isOnline ? null : renderOfflineTiles()}
 
-          {/* Render active dots while recording */}
-          {dots.length > 0 && (
-            <>
-              <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
-              {dots.map((dot, index) => (
-                <Marker
-                  key={index}
-                  coordinate={dot}
-                  draggable
-                  onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
-                  />
-              ))}
-            </>
-          )}
+        {pathStorage.getPaths().map((path, pathIndex) => (
+          <Polyline
+            key={pathIndex}
+            coordinates={path.dots || []}
+            strokeColor="blue"
+            strokeWidth={5}
+            tappable={true}
+            onPress={() => handlePathPress(path)}
+          />
+        ))}
 
-          {/* Render marker for selected path */}
-          {selectedPath && (
-            <Marker coordinate={selectedPath}>
-              <Icon name="map-signs" size={30} color="blue" />
-            </Marker>
-          )}
-        </MapView>
-      ) : (
-        <MapView
-          key="offline-map"
-          ref={mapRef}
-          style={styles.map}
-          provider={null} // Disable Google Maps when offline
-          initialRegion={{
-            latitude: myLocation?.latitude || 37.78825,
-            longitude: myLocation?.longitude || -122.4324,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          }}
-          onPress={handleMapPress}
-        >
-          {/* Render offline tiles */}
-          {renderOfflineTiles()}
+        {dots.length > 0 && (
+          <>
+            <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
+            {dots.map((dot, index) => (
+              <Marker
+                key={index}
+                coordinate={dot}
+                draggable
+                onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
+              />
+            ))}
+          </>
+        )}
 
-          {/* Render polylines for stored paths */}
-          {pathStorage.getPaths().map((path, pathIndex) => (
-            <Polyline
-              key={pathIndex}
-              coordinates={path.dots || []}
-              strokeColor="blue"
-              strokeWidth={5}
-              tappable={true}
-              onPress={() => handlePathPress(path)}
-            />
-          ))}
-
-          {/* Render active dots while recording */}
-          {dots.length > 0 && (
-            <>
-              <Polyline coordinates={dots} strokeColor="red" strokeWidth={5} />
-              {dots.map((dot, index) => (
-                <Marker
-                  key={index}
-                  coordinate={dot}
-                  draggable
-                  onDragEnd={(e) => handleMarkerDrag(index, e.nativeEvent.coordinate)}
-                />
-              ))}
-            </>
-          )}
-
-          {/* Render marker for selected path */}
-          {selectedPath && (
-            <Marker coordinate={selectedPath}>
-              <Icon name="map-signs" size={30} color="blue" />
-            </Marker>
-          )}
-        </MapView>
-      )}
+        {selectedPath && (
+          <Marker coordinate={selectedPath}>
+            <Icon name="map-signs" size={30} color="blue" />
+          </Marker>
+        )}
+      </MapView>
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity onPress={handleStartStop} style={styles.button}>
@@ -316,11 +256,7 @@ const renderOfflineTiles = () => {
         </TouchableOpacity>
 
         <TouchableOpacity onPress={() => pathStorage.logPaths()} style={[styles.button, styles.testButton]}>
-          <Text style={styles.buttonText}>Storage</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => CacheAux.listCachedFiles()} style={[styles.button, styles.cacheButton]}>
-          <Text style={styles.buttonText}>Cache</Text>
+          <Text style={styles.buttonText}>Test PathStorage</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -354,9 +290,6 @@ const styles = StyleSheet.create({
   },
   testButton: {
     backgroundColor: 'orange',
-  },
-  cacheButton: {
-    backgroundColor: 'green',
   },
   buttonText: {
     color: '#fff',
