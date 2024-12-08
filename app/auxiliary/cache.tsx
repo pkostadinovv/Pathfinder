@@ -1,147 +1,69 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Dimensions, Image, Text, PanResponder } from 'react-native';
+import { CacheManager } from 'expo-cached-image';
 import * as FileSystem from 'expo-file-system';
 
-export default function ExploreScreen() {
-  const [zoomLevel] = useState(15); // Fixed zoom level for predefined tiles
-  const [center, setCenter] = useState({ x: 16883, y: 10906 }); // Default center tile (middle of the range)
-  const [offlineTiles, setOfflineTiles] = useState([]);
-  const mapOffset = useRef({ x: 0, y: 0 });
-
-  // Predefined tile ranges for zoom level 15
-  const tileRanges = {
-    15: { x: [16878, 16887], y: [10902, 10910] },
-  };
-
-  const screenDimensions = {
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
-  };
-
-  // Pan responder for user interaction
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderMove: (e, gestureState) => {
-      mapOffset.current = {
-        x: gestureState.dx,
-        y: gestureState.dy,
-      };
-    },
-    onPanResponderRelease: () => {
-      const deltaX = Math.round(mapOffset.current.x / 256); // Tiles are 256px wide
-      const deltaY = Math.round(mapOffset.current.y / 256); // Tiles are 256px tall
-
-      setCenter((prevCenter) => ({
-        x: Math.max(
-          tileRanges[zoomLevel].x[0],
-          Math.min(prevCenter.x - deltaX, tileRanges[zoomLevel].x[1])
-        ),
-        y: Math.max(
-          tileRanges[zoomLevel].y[0],
-          Math.min(prevCenter.y - deltaY, tileRanges[zoomLevel].y[1])
-        ),
-      }));
-
-      mapOffset.current = { x: 0, y: 0 }; // Reset offset
-    },
-  });
-
-  useEffect(() => {
-    const loadTiles = async () => {
-      const tiles = [];
-      const { x: [minX, maxX], y: [minY, maxY] } = tileRanges[zoomLevel];
-      const range = 2; // Number of tiles to load around the center
-
-      for (let x = center.x - range; x <= center.x + range; x++) {
-        for (let y = center.y - range; y <= center.y + range; y++) {
-          if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-            const cacheKey = `${zoomLevel}_${x}_${y}`;
-            const localTilePath = `${FileSystem.cacheDirectory}${cacheKey}.png`;
-            const fileInfo = await FileSystem.getInfoAsync(localTilePath);
-
-            if (fileInfo.exists) {
-              // Push valid tiles only
-              tiles.push({ uri: `file://${localTilePath}`, x, y }); // Ensure URI is prefixed with "file://"
-            } else {
-              console.warn(`Missing tile: ${cacheKey}`);
-            }
-          }
-        }
-      }
-      setOfflineTiles(tiles);
-    };
-
-    loadTiles();
-  }, [center, zoomLevel]);
-
-  return (
-    <View style={styles.container} {...panResponder.panHandlers}>
-      {/* Render offline tiles */}
-      <View style={styles.mapContainer}>
-        {offlineTiles.map((tile, index) => (
-          <Image
-            key={index}
-            source={{ uri: tile.uri }} // Ensure this is a valid file URI
-            style={[
-              styles.tile,
-              {
-                position: 'absolute',
-                left:
-                  (tile.x - center.x) * 256 +
-                  screenDimensions.width / 2 +
-                  mapOffset.current.x,
-                top:
-                  (tile.y - center.y) * 256 +
-                  screenDimensions.height / 3 +
-                  mapOffset.current.y,
-              },
-            ]}
-          />
-        ))}
-        {offlineTiles.length === 0 && (
-          <Text style={styles.message}>No tiles available for the current view.</Text>
-        )}
-      </View>
-      <View style={styles.infoContainer}>
-        <Text style={styles.info}>Center Tile: X {center.x}, Y {center.y}</Text>
-      </View>
-    </View>
+// Helper function for retry logic
+const retry = (fn: () => Promise<any>, retries = 3, delay = 1000): Promise<any> =>
+  fn().catch((err) =>
+    retries > 1
+      ? new Promise((resolve) =>
+          setTimeout(() => resolve(retry(fn, retries - 1, delay * 2)), delay)
+        )
+      : Promise.reject(err)
   );
-}
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f0f0f0',
-  },
-  mapContainer: {
-    flex: 1,
-    position: 'relative',
-    backgroundColor: '#ccc', // Placeholder background
-  },
-  tile: {
-    width: 256,
-    height: 256,
-  },
-  message: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: Dimensions.get('window').height / 3,
-    fontSize: 16,
-    color: '#888',
-  },
-  infoContainer: {
-    position: 'absolute',
-    bottom: 20,
-    left: 10,
-    right: 10,
-    alignItems: 'center',
-  },
-  info: {
-    fontSize: 14,
-    backgroundColor: '#ffffffcc',
-    padding: 5,
-    borderRadius: 5,
-  },
-});
+// Download a tile and cache it
+export const downloadTile = async (x: number, y: number, z: number) => {
+  const url = `https://reritiles.protomix.com/${z}/${x}/${y}.png`;
+  const cacheKey = `${z}_${x}_${y}`;
+
+  try {
+    const cachedUri = await CacheManager.getCachedUri({ key: cacheKey });
+    if (!cachedUri) {
+      await retry(() => CacheManager.downloadAsync({ uri: url, key: cacheKey }), 3);
+      console.log(`Tile ${z}/${x}/${y} downloaded and cached.`);
+    } else {
+      console.log(`Tile ${z}/${x}/${y} retrieved from cache.`);
+    }
+  } catch (error) {
+    console.error(`Error downloading tile ${z}/${x}/${y}:`, error);
+  }
+};
+
+// Hardcoded tile ranges for different zoom levels
+const tileRanges = {
+  12: { x: [2109, 2110], y: [1362, 1363] },
+  13: { x: [4219, 4221], y: [2725, 2727] },
+  14: { x: [8439, 8443], y: [5451, 5455] },
+  15: { x: [16878, 16887], y: [10902, 10910] },
+  16: { x: [33756, 33775], y: [21804, 21820] },
+  17: { x: [67512, 67550], y: [43608, 43640] },
+};
+
+// Download all tiles for hardcoded zoom levels and ranges
+export const downloadAllTiles = async () => {
+  for (const zoom in tileRanges) {
+    const { x: [minX, maxX], y: [minY, maxY] } = tileRanges[zoom];
+
+    console.log(`Downloading tiles for zoom level ${zoom}...`);
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        await downloadTile(x, y, parseInt(zoom));
+      }
+    }
+
+    console.log(`Tiles for zoom level ${zoom} downloaded.`);
+  }
+
+  console.log("All tiles downloaded successfully.");
+};
+
+// Utility function to list cached files
+export const listCachedFiles = async () => {
+  try {
+    const cachedFiles = await FileSystem.readDirectoryAsync(FileSystem.cacheDirectory);
+    console.log("Cached Files:", cachedFiles);
+  } catch (error) {
+    console.error("Error listing cached files:", error);
+  }
+};
