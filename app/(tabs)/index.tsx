@@ -255,8 +255,12 @@ const renderOfflineTiles = () => {
           <Text style={styles.buttonText}>Clear</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => pathStorage.logPaths()} style={[styles.button, styles.testButton]}>
-          <Text style={styles.buttonText}>Test PathStorage</Text>
+        <TouchableOpacity onPress={() => pathStorage.logPaths()} style={[styles.button, styles.pathsButton]}>
+          <Text style={styles.buttonText}>Paths</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => CacheAux.listCachedFiles()} style={[styles.button, styles.cacheButton]}>
+          <Text style={styles.buttonText}>Cache</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -288,8 +292,11 @@ const styles = StyleSheet.create({
   clearButton: {
     backgroundColor: 'red',
   },
-  testButton: {
+  pathsButton: {
     backgroundColor: 'orange',
+  },
+  cacheButton: {
+    backgroundColor: 'green',
   },
   buttonText: {
     color: '#fff',
